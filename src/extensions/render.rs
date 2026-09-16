@@ -26,6 +26,11 @@ pub struct RenderExtension {
     visual_mode: Option<Arc<RwLock<VisualModeExtension>>>,
     scroll_row: AtomicUsize,
     scroll_col: AtomicUsize,
+    /// Size of the editor text area (rows x cols) from the last rendered
+    /// frame — excludes the status bar and the paragraph border. Refreshed
+    /// every draw so the viewport adapts to terminal resizes.
+    viewport_rows: AtomicUsize,
+    viewport_cols: AtomicUsize,
     show_line_numbers: bool,
 }
 
@@ -69,6 +74,8 @@ impl RenderExtension {
             visual_mode: None,
             scroll_row: AtomicUsize::new(0),
             scroll_col: AtomicUsize::new(0),
+            viewport_rows: AtomicUsize::new(24),
+            viewport_cols: AtomicUsize::new(80),
             show_line_numbers: true,
         }
     }
@@ -85,33 +92,109 @@ impl RenderExtension {
         self.vi_input = Some(vi_input);
     }
 
+    /// Record the editor text-area size for the current frame.
+    /// Called on every render with the actual frame dimensions so scrolling
+    /// adapts to variable terminal height and width (including resizes).
+    pub fn set_viewport(&self, rows: usize, cols: usize) {
+        self.viewport_rows.store(rows.max(1), Ordering::Relaxed);
+        self.viewport_cols.store(cols.max(1), Ordering::Relaxed);
+    }
+
+    pub fn scroll_row(&self) -> usize {
+        self.scroll_row.load(Ordering::Relaxed)
+    }
+
+    pub fn scroll_col(&self) -> usize {
+        self.scroll_col.load(Ordering::Relaxed)
+    }
+
+    /// Keep the scroll offsets inside the document: the viewport may never
+    /// scroll the last line (or the longest line's end) out of view. Without
+    /// this, scrolling past the end of the file leaves a blank page and the
+    /// bottom of the document clips into the status bar area.
+    pub fn clamp_scroll(&self, line_count: usize, max_line_len: usize) {
+        let rows = self.viewport_rows.load(Ordering::Relaxed);
+        let cols = self.viewport_cols.load(Ordering::Relaxed);
+        let max_scroll_row = line_count.saturating_sub(rows);
+        let sr = self.scroll_row.load(Ordering::Relaxed).min(max_scroll_row);
+        self.scroll_row.store(sr, Ordering::Relaxed);
+        let max_scroll_col = max_line_len.saturating_sub(cols);
+        let sc = self.scroll_col.load(Ordering::Relaxed).min(max_scroll_col);
+        self.scroll_col.store(sc, Ordering::Relaxed);
+    }
+
     /// Auto-scroll horizontally and vertically to keep the cursor visible.
     /// Called after every key event so the cursor doesn't vanish off-screen
     /// when moving past the visible area or editing long lines.
-    pub fn ensure_cursor_visible(&self, cursor_row: usize, cursor_col: usize, visible_width: u16) {
-        let scroll_row = self.scroll_row.load(Ordering::Relaxed);
-        let scroll_col = self.scroll_col.load(Ordering::Relaxed);
+    /// The visible area size comes from the last rendered frame, so it works
+    /// for any terminal height and width.
+    pub fn ensure_cursor_visible(&self, cursor_row: usize, cursor_col: usize) {
+        let rows = self.viewport_rows.load(Ordering::Relaxed);
+        let cols = self.viewport_cols.load(Ordering::Relaxed);
 
         // Vertical: scroll down if cursor is below visible area, up if above
-        let row = cursor_row;
-        if row < scroll_row {
-            self.scroll_row.store(row, Ordering::Relaxed);
-        } else if row >= scroll_row + visible_width as usize {
-            self.scroll_row.store(
-                row.saturating_sub(visible_width as usize - 1),
-                Ordering::Relaxed,
-            );
+        let scroll_row = self.scroll_row();
+        if cursor_row < scroll_row {
+            self.scroll_row.store(cursor_row, Ordering::Relaxed);
+        } else if cursor_row >= scroll_row + rows {
+            self.scroll_row
+                .store(cursor_row.saturating_sub(rows - 1), Ordering::Relaxed);
         }
 
         // Horizontal: scroll right if cursor_col exceeds visible area
-        let col = cursor_col;
-        if col < scroll_col {
-            self.scroll_col.store(col, Ordering::Relaxed);
-        } else if col >= scroll_col + visible_width as usize {
-            self.scroll_col.store(
-                col.saturating_sub(visible_width as usize - 1),
-                Ordering::Relaxed,
-            );
+        let scroll_col = self.scroll_col();
+        if cursor_col < scroll_col {
+            self.scroll_col.store(cursor_col, Ordering::Relaxed);
+        } else if cursor_col >= scroll_col + cols {
+            self.scroll_col
+                .store(cursor_col.saturating_sub(cols - 1), Ordering::Relaxed);
+        }
+    }
+
+    /// Vim-style page scrolling: move the viewport AND the cursor by a page
+    /// (or half page) in the given direction, so the cursor stays in view and
+    /// the viewport is not snapped back on the next key press.
+    fn page_scroll(
+        &self,
+        editor_runtime: &mut EditorRuntime,
+        buffer: Option<ActorId>,
+        dir: i64,
+        full_page: bool,
+    ) {
+        let visible = self.viewport_rows.load(Ordering::Relaxed) as i64;
+        let step = if full_page {
+            visible
+        } else {
+            (visible / 2).max(1)
+        };
+        let step = step * dir;
+        if step == 0 {
+            return;
+        }
+
+        let sr = self.scroll_row() as i64;
+        self.scroll_row
+            .store((sr + step).max(0) as usize, Ordering::Relaxed);
+
+        // Move the cursor by the same delta (clamped to the buffer) so it
+        // remains inside the scrolled viewport.
+        let cmd = if dir > 0 { "down" } else { "up" };
+        for _ in 0..step.abs() {
+            let _ = editor_runtime.run_command(cmd, buffer);
+        }
+
+        if let Some(buf) = buffer {
+            if let Ok(handle) = editor_runtime
+                .runtime()
+                .request(buf, BufferMessage::GetCursorPosition)
+            {
+                if let Ok(reply) = handle.recv_timeout(std::time::Duration::from_millis(100)) {
+                    if let Ok(pos) = reply.downcast::<(usize, usize)>() {
+                        let (row, col) = *pos;
+                        self.ensure_cursor_visible(row, col);
+                    }
+                }
+            }
         }
     }
 
@@ -140,27 +223,22 @@ impl RenderExtension {
                     if key.code == KeyCode::Char('q') && key.modifiers == KeyModifiers::CONTROL {
                         break;
                     }
-                    // Handle scroll keys (Ctrl+d = page down, Ctrl+u = page up)
                     if key.modifiers == KeyModifiers::CONTROL {
                         match key.code {
                             KeyCode::Char('d') => {
-                                self.scroll_row.fetch_add(10, Ordering::Relaxed);
+                                self.page_scroll(editor_runtime, buffer, 1, false);
                                 continue;
                             }
                             KeyCode::Char('u') => {
-                                let prev = self.scroll_row.load(Ordering::Relaxed);
-                                self.scroll_row
-                                    .store(prev.saturating_sub(10), Ordering::Relaxed);
+                                self.page_scroll(editor_runtime, buffer, -1, false);
                                 continue;
                             }
                             KeyCode::Char('f') => {
-                                self.scroll_row.fetch_add(1, Ordering::Relaxed);
+                                self.page_scroll(editor_runtime, buffer, 1, true);
                                 continue;
                             }
                             KeyCode::Char('b') => {
-                                let prev = self.scroll_row.load(Ordering::Relaxed);
-                                self.scroll_row
-                                    .store(prev.saturating_sub(1), Ordering::Relaxed);
+                                self.page_scroll(editor_runtime, buffer, -1, true);
                                 continue;
                             }
                             KeyCode::Left => {
@@ -188,10 +266,7 @@ impl RenderExtension {
                             {
                                 if let Ok(pos) = reply.downcast::<(usize, usize)>() {
                                     let (row, col) = *pos;
-                                    // Auto-scroll to keep cursor visible
-                                    // Use a conservative estimate: 80 cols minus gutter
-                                    let visible_width = 75u16;
-                                    self.ensure_cursor_visible(row, col, visible_width);
+                                    self.ensure_cursor_visible(row, col);
                                 }
                             }
                         }
@@ -294,8 +369,6 @@ impl RenderExtension {
         let file_name = self.get_file_name(runtime);
 
         let area = f.area();
-        let scroll_row = self.scroll_row.load(Ordering::Relaxed) as u16;
-        let scroll_col = self.scroll_col.load(Ordering::Relaxed) as u16;
 
         // Layout: editor | status
         let vertical = Layout::default()
@@ -313,6 +386,29 @@ impl RenderExtension {
         } else {
             0
         };
+
+        let inner_rows = editor_area.height.saturating_sub(2) as usize;
+        let inner_cols = editor_area.width.saturating_sub(2) as usize;
+        let scroll_col_now = self.scroll_col.load(Ordering::Relaxed);
+        let gutter = if scroll_col_now == 0 {
+            num_width as usize
+        } else {
+            0
+        };
+        let visible_cols = inner_cols.saturating_sub(gutter).max(1);
+        self.set_viewport(inner_rows.max(1), visible_cols);
+
+        self.clamp_scroll(
+            max_line,
+            content
+                .lines()
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0),
+        );
+
+        let scroll_row = self.scroll_row.load(Ordering::Relaxed) as u16;
+        let scroll_col = self.scroll_col.load(Ordering::Relaxed) as u16;
         let search_pattern = self.get_search_pattern();
         let lines: Vec<Line> = content
             .lines()
@@ -352,9 +448,10 @@ impl RenderExtension {
         let inner_y = editor_area.y + 1 + (cursor_row as u16).saturating_sub(scroll_row);
 
         let mode_text = match self.get_visual_mode() {
-            VisualMode::Char => " VISUAL ",
-            VisualMode::Line => " V-LINE ",
+            // Vi mode with an active selection — both char and line visual show VISUAL.
+            VisualMode::Char | VisualMode::Line => " VISUAL ",
             VisualMode::Off => match mode {
+                EditorMode::Basic => " BASIC ",
                 EditorMode::Normal => " NORMAL ",
                 EditorMode::Insert => " INSERT ",
                 EditorMode::Command => " COMMAND ",
@@ -400,15 +497,14 @@ impl RenderExtension {
         (0, 0)
     }
 
-    fn get_mode(&self) -> EditorMode {
-        // Use vi input mode if present
+    pub fn get_mode(&self) -> EditorMode {
         if let Some(ref vi) = self.vi_input {
             if let Ok(guard) = vi.read() {
                 return guard.mode();
             }
         }
-        // Default to Normal if no vi input
-        EditorMode::Normal
+        // No vi input: the editor runs in basic mode by default.
+        EditorMode::Basic
     }
 
     fn get_visual_mode(&self) -> VisualMode {

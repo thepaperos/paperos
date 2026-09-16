@@ -48,6 +48,52 @@ cargo fmt
 cargo run -- file.txt
 ```
 
-## Project References
-- Architecture: docs/architecture.md
-- Roadmap: docs/roadmap.md
+## TDD Method
+
+Every change follows red → green → refactor. No exceptions.
+
+### 1. Write acceptance tests first
+
+Place behavioural tests in `tests/acceptance/<feature>_tests.rs`.
+Add a `[[test]]` target in `Cargo.toml` so cargo discovers subdirectory files.
+
+One test per acceptance criterion. Each test hits a real public entry point
+(`ensure_cursor_visible`, `clamp_scroll`, `BufferMessage::MoveDown`, etc.)
+— no mocked internals, no assertion-free smoke checks.
+
+Run them. They must fail (compile error or assertion failure). That is the
+signal that the feature does not yet exist.
+
+### 2. Write failing unit tests
+
+Place internal logic tests in the same file as the unit under test, inside
+`#[cfg(test)] mod tests { ... }`. These cover edge cases, clamping, and
+private helper behaviour that acceptance tests cannot reach directly.
+
+Run them. They must also fail.
+
+### 3. Implement
+
+Make both test sets pass with the smallest change that satisfies them.
+Follow existing codebase patterns (read sibling files first).
+Do not add unrelated features, refactors, or dependencies.
+
+### 4. Verify
+
+```bash
+cargo test          # acceptance + unit — all green
+cargo check         # no new warnings
+cargo fmt           # formatted
+```
+
+### Rules
+
+- **Fix the code, never the test.** If an acceptance test fails, the
+  implementation is wrong — rewrite the test only if the criterion itself
+  was misunderstood (ask the user first).
+- **No test, no feature.** An acceptance criterion without a matching
+  failing test does not count as done.
+- **Agent self-reporting is not evidence.** Only a green `cargo test`
+  output counts. Print it.
+- **Minimal change.** Each commit should be the smallest diff that
+  makes the failing tests pass. Do not sneak in refactors.

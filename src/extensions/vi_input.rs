@@ -13,6 +13,8 @@ pub struct ViInputExtension {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMode {
+    /// Default mode — basic/text-editor keybindings (arrows, direct typing).
+    Basic,
     Normal,
     Insert,
     Command,
@@ -53,7 +55,7 @@ impl Extension for ViInputExtension {
 impl ViInputExtension {
     pub fn new() -> Self {
         Self {
-            mode: EditorMode::Normal,
+            mode: EditorMode::Basic,
             command_buffer: String::new(),
             last_command: None,
         }
@@ -84,6 +86,23 @@ impl ViInputExtension {
                     Some(format!("insert {}", ch))
                 }
             }
+            EditorMode::Basic => match ch {
+                'i' => {
+                    self.mode = EditorMode::Insert;
+                    None
+                }
+                ':' => {
+                    self.mode = EditorMode::Command;
+                    self.command_buffer.clear();
+                    None
+                }
+                '/' => {
+                    self.mode = EditorMode::Search;
+                    self.command_buffer.clear();
+                    None
+                }
+                _ => None,
+            },
             EditorMode::Normal => match ch {
                 'i' => {
                     self.mode = EditorMode::Insert;
@@ -193,6 +212,10 @@ mod tests {
     #[test]
     fn test_normal_mode_hjkl_commands() {
         let mut ext = ViInputExtension::new();
+        // h/j/k/l are vi commands: enter vi mode first (i then Esc → Normal).
+        ext.handle_char_key('i');
+        ext.handle_char_key('\x1b');
+        assert_eq!(ext.mode(), EditorMode::Normal);
         assert_eq!(ext.handle_char_key('h'), Some("left".to_string()));
         assert_eq!(ext.handle_char_key('j'), Some("down".to_string()));
         assert_eq!(ext.handle_char_key('k'), Some("up".to_string()));

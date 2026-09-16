@@ -17,3 +17,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
 zip = "0.6"
+
+[[test]]
+name = "acceptance_scroll_tests"
+path = "tests/acceptance/scroll_tests.rs"
+
+[[test]]
+name = "acceptance_basic_mode_status_tests"
+path = "tests/acceptance/basic_mode_status_tests.rs"
