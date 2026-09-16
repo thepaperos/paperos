@@ -1,13 +1,13 @@
-# paperOS Roadmap
+# PaperOS Roadmap
 
 ## Overview
 
-This document outlines the development phases for paperOS, the programmable editor built on the Runact actor runtime.
+PaperOS is a programmable computing environment built on the Runact actor runtime. The editor is only the first major extension — terminal, Git, LSP, search, AI, and user extensions follow.
 
-paperOS follows a **minimal core + extensions** architecture:
+PaperOS follows a **minimal core + extensions** architecture:
 
-- **Core** (`src/core/`) — The minimal document model: `EditorRuntime` (spawn/shutdown, command registry, extension management), `Extension` trait (lifecycle + hooks), and `BufferActor` (document data model with undo/redo history). No file I/O, no terminal rendering, no input parsing, no scripting.
-- **Built-in extensions** (`src/extensions/`) — `InputExtension` (key → command translation), `RenderExtension` (terminal UI, event loop), `FileExtension` (file I/O: open/save), `BufferCommands` (maps command names to BufferMessage sends), `LuaExtension` (Lua scripting engine), `BufferManager` (multi-buffer lifecycle: spawn, switch, track), `VisualModeExtension` (visual mode, yank, paste, search). Every editor action is a command.
+- **Core** (`src/core/`) — The runtime scaffold: `EditorRuntime` (actor spawning, command registry, extension lifecycle), `Extension` trait (lifecycle + hooks), and `BufferActor` (document data model with undo/redo history). No file I/O, no terminal rendering, no input parsing, no scripting.
+- **Built-in extensions** (`src/extensions/`) — `InputExtension` (key → command translation), `ViInputExtension` (vi-style keybindings), `RenderExtension` (terminal UI, event loop), `FileExtension` (file I/O: open/save), `BufferCommands` (maps command names to BufferMessage sends), `LuaExtension` (Lua scripting engine), `BufferManager` (multi-buffer lifecycle), `VisualModeExtension` (visual mode, yank, paste, search).
 - **Architecture doc**: see `docs/architecture.md`
 - **Extension management**: see `docs/extensions.md`
 
@@ -18,113 +18,129 @@ paperOS follows a **minimal core + extensions** architecture:
 | Component | Status | Tests |
 |-----------|--------|-------|
 | **Runact** (runtime) | v1.0.0 released | 48/48 passing |
-| **paperOS** (core) | ✅ Minimal core: EditorRuntime, Extension trait, BufferActor | Compiles |
-| **paperOS** (built-in extensions) | ✅ InputExtension, RenderExtension, FileExtension, BufferCommands, LuaExtension | Compiles |
+| **paperOS** (core) | Minimal core: EditorRuntime, Extension trait, BufferActor | Compiles |
+| **paperOS** (extensions) | InputExtension, ViInputExtension, RenderExtension, FileExtension, LuaExtension, BufferManager, VisualModeExtension | Compiles |
 
 ---
 
-## Phase 1 — Minimal Core ✅
+## Phase 1 — Architecture (partially complete)
 
-### Deliverables
+Implement/document:
 
 - [x] `paperos/` — Separate project (package name `paperos`)
 - [x] `src/core/` — `Extension` trait, `EditorRuntime`, `BufferActor`
-- [x] `src/extensions/` — `InputExtension`, `RenderExtension`, `FileExtension`, `BufferCommands`
+- [x] `src/extensions/` — All built-in extensions
 - [x] `src/main.rs` — bootstraps runtime, spawns buffer, registers commands, runs event loop
-
-### Core Module
-
-```
-src/core/
-├── mod.rs        — re-exports
-├── extension.rs  — Extension trait (Any + Send + Sync, init/shutdown/on_key/on_render)
-├── runtime.rs    — EditorRuntime + CommandRegistry + CommandHandler trait
-└── buffer.rs     — BufferActor + BufferMessage (document data model only)
-```
-
-### Built-in Extensions
-
-```
-src/extensions/
-├── mod.rs
-├── buffer_commands.rs — BufferCommands (maps commands → BufferMessages)
-├── file.rs      — FileExtension (file I/O: open, write)
-├── input.rs     — InputExtension (vi modes, key → command translation)
-├── render.rs    — RenderExtension (crossterm + ratatui, event loop, status bar)
-├── lua_ext.rs   — LuaExtension (Lua scripting engine via mlua)
-├── buffer_manager.rs — BufferManager (multi-buffer lifecycle: spawn, switch, track)
-└── visual_mode.rs — VisualModeExtension (visual mode, yank, paste, search)
-```
-
----
-
-## Phase 2 — Extension Architecture ✅
-
-### Deliverables
-
-- [x] Extension trait with `init()`, `shutdown()`, `on_key()`, `on_render()` hooks
-- [x] Extension lookup by type: `runtime.extension::<T>()`
 - [x] Command system — `CommandHandler` trait, `CommandRegistry`, `run_command()` dispatch
-- [x] Event hooks (`on_key`, `on_render`, `shutdown`) implemented on all extensions
+- [x] Extension lifecycle (`init`, `shutdown`, `on_key`, `on_render`)
+- [x] Extension lookup by type: `runtime.extension::<T>()`
+- [x] Event hooks implemented on all extensions
 - [x] File I/O as commands (`open`/`e`, `write`/`w`)
 - [x] Lua scripting engine (mlua) for config and extensions
-- [x] Config dependency guards (requires/available pattern)
-- [x] Extension lifecycle (init, activate, commands, keybindings)
-- [x] Command dispatch fix (args[0] is command name, args[1+] are arguments)
-- [x] Command parsing fix (space characters preserved in insert commands)
-- [x] Quit command (`:q` / `:quit`)
+- [ ] Event bus (cross-extension state change notification)
+- [ ] UI protocol definition
+- [ ] Capability management (extension permissions)
 
 ---
 
-## Roadmap to paperOS v1
+## Phase 2 — Editor Vertical Slice
 
-### v0.5 — Working Editor
+Implement:
 
-| Task | Priority | Status |
-|------|----------|--------|
-| Fix cursor rendering | high | ✅ |
-| Buffer: line wrapping, scroll | high | ✅ |
-| Input: complete vim keybindings (w, b, e, gg, G) | medium | ✅ |
-| File: open/save via `:e` and `:w` commands | high | ✅ |
-| Status bar: file name, line count, modified indicator | medium | ✅ |
-| CLI: `paperos --help`, `paperos <file>` | high | ✅ |
-| Buffer: open file from CLI argument | high | ✅ |
+- [ ] BufferActor with full CRUD through commands
+- [ ] Open / Edit / Undo / Redo / Save entirely through commands → actors → events
+- [ ] Web UI connected through UI protocol
+- [ ] Basic keybindings mapped to commands
 
-### v0.6 — Usability
+This proves the architecture works end-to-end. No shortcut implementation should bypass the command/event system.
 
-| Task | Priority | Status |
-|------|----------|--------|
-| Visual mode (selection) | medium | ✅ |
-|| Search (`/`) | medium | ✅ |
-|| Clipboard (yank/paste/delete) | medium | ✅ |
-|| Line numbers | medium | ✅ |
-|| Multiple buffers/windows | medium | ✅ |
+---
 
-### v0.7 — Extensibility
+## Phase 3 — Extension System
 
-| Task | Priority | Status |
-|------|----------|--------|
-|| Lua extension API docs | medium | ⬜ |
-|| Built-in extensions: syntax highlighting | medium | ⬜ |
-|| Example: custom status bar extension | low | ⬜ |
+Implement:
 
-### v1.0 — Release
+- [ ] Extension manifest format
+- [ ] Extension discovery and loading from `~/.config/paperos/extensions/`
+- [ ] Lua API (`paper.*` namespace)
+- [ ] Extension lifecycle management (load / unload / reload)
+- [ ] Extension configuration
+- [ ] Command/event API for extensions
+- [ ] Extension isolation (own Lua state)
 
-| Task | Priority | Status |
-|------|----------|--------|
-| `cargo publish` to crates.io | high | ✅ |
-| README with screenshots | high | ✅ |
-| `paperos --help`, `paperos <file>` CLI | high | ✅ |
+---
+
+## Phase 4 — Development Environment
+
+Add:
+
+- [ ] Filesystem service/extension (open, read, write, watch, search directory)
+- [ ] Terminal extension (TerminalActor + subprocess lifecycle via Runact)
+- [ ] Search extension (SearchActor + compute pool for large searches)
+- [ ] Git extension (GitActor + source control view + git commands)
+- [ ] LSP extension (diagnostics, completion, hover, definition, references, rename)
+
+---
+
+## Phase 5 — Automation
+
+Add:
+
+- [ ] Event-driven workflows (`on("file.saved", handler)`)
+- [ ] Task scheduling
+- [ ] Timers
+- [ ] Lua automation API
+- [ ] Auto-format on save, auto-test on commit
+
+---
+
+## Phase 6 — AI
+
+Add:
+
+- [ ] AI provider abstraction
+- [ ] AI actors (AIAgentActor with conversation state, context, task state, tool state)
+- [ ] Tool system (read buffer, inspect diagnostics, run tests, modify buffer)
+- [ ] Context system
+- [ ] Agent workflows
+- [ ] Permission system for AI operations
+
+---
+
+## Phase 7 — Extension Ecosystem
+
+Add:
+
+- [ ] Package manager (discover, install, update, remove)
+- [ ] Extension registry
+- [ ] Versioning and compatibility checking
+- [ ] Dependency resolution
+- [ ] Updates and upgrade management
+- [ ] Sandboxing (WASM extensions)
+
+---
+
+## Development Guidelines
+
+See `AGENTS.md` for development rules. All changes follow TDD: red → green → refactor.
+
+```bash
+cargo check           # type check
+cargo build --release # optimized build
+cargo test            # run all tests
+cargo fmt             # format code
+```
 
 ---
 
 ## Success Metrics
 
-### Editor
-- Working editor
-- Responsive UI
-- Real-world functionality
-- Extensions work
+- Working editor with responsive UI
+- Extensions compose through commands and events
+- Extension failure does not crash the environment
+- Multiple UIs supported through stable protocol
+- Users can add, remove, and replace extensions
+- Real-world editing workflows function correctly
 
 ---
 

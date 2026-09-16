@@ -1,13 +1,15 @@
 # paperOS
 
-A programmable editor built on the [Runact](https://github.com/) actor runtime.
+A programmable computing environment built on the [Runact](https://github.com/) actor runtime.
 
 ## Features
 
-- **Everything is a Command**: Every editor action is a named command (`left`, `insert`, `undo`, `open`, `write`, `quit`, etc.)
-- **Minimal Core**: The core only contains the document model (`BufferActor`), runtime scaffold (`EditorRuntime`), and extension interface (`Extension` trait)
-- **Lua Extension System**: Configuration and extensions are written in Lua — no need to recompile for customization
-- **Vi-style keybindings**: Built-in normal/insert/command modes with full undo/redo
+- **Everything is a Command**: Every user action is a named command routed through the command bus
+- **Minimal Core**: The core only contains the runtime, actor management, command routing, event routing, extension lifecycle, and capability management
+- **Extensions Are First-Class**: Editor, terminal, Git, LSP, search, AI, and other capabilities are composable extensions
+- **Lua Extension System**: Configuration and extensions are written in Lua — no recompilation needed for customization
+- **Crash Isolation**: Extension failures don't crash the environment — Runact supervision restarts failed components
+- **Multiple UIs**: The same core supports web, desktop, terminal, and remote UIs through a stable UI protocol
 
 ## Installation
 

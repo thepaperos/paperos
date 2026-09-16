@@ -2,9 +2,36 @@
 
 ## Overview
 
-paperOS supports user extensions installed in `~/.config/paperos/extensions/`.
-This document describes the discovery, metadata format, dependency resolution,
-and load ordering rules used by the extension manager.
+Extensions are the fundamental building blocks of PaperOS. The editor, terminal, Git integration, LSP, search, AI, and other capabilities are all composable extensions running on a small stable core. Users modify the environment itself by adding, removing, or replacing extensions.
+
+An extension may provide:
+
+```text
+Commands
+Events
+Actors
+Views
+Panels
+Menus
+Keybindings
+Configuration
+Services
+Resources
+Tasks
+Capabilities
+```
+
+Example:
+
+```text
+Git Extension
+ ├── git.status
+ ├── git.commit
+ ├── git.push
+ ├── GitActor
+ ├── SourceControlView
+ └── Git configuration
+```
 
 ## Extension Layout
 
@@ -20,6 +47,68 @@ extensions/
 │   └── init.lua
 ```
 
+## Extension Capabilities
+
+Every extension declares the capabilities it requires. The runtime grants or denies them at load time based on user or policy configuration.
+
+Potential capability classes:
+
+```text
+filesystem.read
+filesystem.write
+network
+process.spawn
+shell
+clipboard
+workspace
+ui
+secrets
+```
+
+An extension should declare required capabilities in its manifest. The user or runtime decides whether they are granted. An extension that needs `filesystem.write` but is not granted that capability should degrade gracefully, not crash.
+
+## Extension Lifecycle
+
+Every extension follows a lifecycle:
+
+```text
+Discovered
+   ↓
+Loaded
+   ↓
+Initialized
+   ↓
+Running
+   ↓
+Stopping
+   ↓
+Stopped
+```
+
+An extension may also be:
+
+```text
+Reloaded
+Disabled
+Upgraded
+Failed
+```
+
+The extension manager controls this lifecycle. A failed extension should be isolated — it should not crash the rest of the environment. Runact supervision can restart failed components.
+
+## Extension Isolation
+
+An extension should not automatically have unrestricted access. Instead, it receives explicit capabilities at load time.
+
+```
+Extension
+    │
+    ▼
+Capabilities
+```
+
+This enables controlled extension permissions. Extensions communicate through stable APIs rather than directly manipulating internal Rust structures. Each extension runs in its own Lua state with isolated global variables.
+
 ## Manifest Format
 
 Each extension declares a `manifest.json`:
@@ -31,32 +120,34 @@ Each extension declares a `manifest.json`:
   "description": "Tree-sitter based syntax highlighting",
   "author": "User Name",
   "depends": ["buffer-api>=0.2", "config>=1.0.0"],
-  "provides": ["syntax-highlighting"]
+  "provides": ["syntax-highlighting"],
+  "capabilities": ["filesystem.read", "workspace.read"]
 }
 ```
 
 Fields:
 
-| Field       | Type     | Description                                      |
-|-------------|----------|--------------------------------------------------|
-| `name`      | string   | Unique extension identifier                      |
-| `version`   | string   | SemVer-style version string                      |
-| `description`| string  | Human-readable summary                           |
-| `author`    | string   | Extension author                                 |
-| `depends`   | string[] | List of required extensions with version constraints |
-| `provides`  | string[] | List of capabilities other extensions can depend on |
+| Field         | Type     | Description                                        |
+|---------------|----------|----------------------------------------------------|
+| `name`        | string   | Unique extension identifier                        |
+| `version`     | string   | SemVer-style version string                        |
+| `description` | string   | Human-readable summary                             |
+| `author`      | string   | Extension author                                   |
+| `depends`     | string[] | List of required extensions with version constraints |
+| `provides`    | string[] | List of capabilities other extensions can depend on |
+| `capabilities`| string[] | List of runtime capabilities required by this extension |
 
 ## Version Constraints
 
 Dependencies support these constraints:
 
-| Syntax             | Meaning                                    |
-|--------------------|--------------------------------------------|
-| `"name"`           | Any version                                |
-| `"name>=X.Y.Z"`    | Minimum version (inclusive)                |
-| `"name==X.Y.Z"`    | Exact version                              |
-| `"name>=X.Y,<X+1.0"`| Range — at least X.Y, less than X+1.0      |
-| `"name>1.0,<=2.0"` | Greater than 1.0 and at most 2.0           |
+| Syntax              | Meaning                                    |
+|---------------------|--------------------------------------------|
+| `"name"`            | Any version                                |
+| `"name>=X.Y.Z"`     | Minimum version (inclusive)                |
+| `"name==X.Y.Z"`     | Exact version                              |
+| `"name>=X.Y,<X+1.0"`| Range — at least X.Y, less than X+1.0     |
+| `"name>1.0,<=2.0"`  | Greater than 1.0 and at most 2.0           |
 
 Example: `"buffer-api>=0.2,<1.0"` — any version from 0.2 up to (but not
 including) 1.0.
@@ -101,13 +192,6 @@ Extensions load in **topological order**: dependencies first, then dependents.
 This ensures that when an extension initializes, all its dependencies are
 already running.
 
-## Isolation
-
-- Each extension runs in its **own Lua state** (isolated global variables).
-- Extensions communicate only through **shared Actor messages** (not direct
-  function calls).
-- Each extension can register **commands** and **event handlers**.
-
 ## Side-by-Side Versions (Future)
 
 If the ecosystem grows to need conflicting versions simultaneously, extensions
@@ -150,3 +234,26 @@ paper.buffer.get_content()     — get current buffer content
 paper.buffer.send_message(msg) — send a message to the buffer actor
 paper.status.set(text)         — update status line
 ```
+
+## Extension Types (Future)
+
+PaperOS will eventually support three tiers of extensions:
+
+```text
+Rust Native Extension
+       │
+       ├── maximum capability
+       └── high performance
+
+WASM Extension
+       │
+       ├── sandboxed
+       └── portable
+
+Lua Extension
+       │
+       ├── lightweight
+       └── highly customizable
+```
+
+Start with Lua. Add WASM and Rust native extensions later.
