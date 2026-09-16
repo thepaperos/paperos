@@ -1,0 +1,19 @@
+[package]
+name = "paperos"
+version = "0.1.0"
+edition = "2021"
+description = "A programmable editor built on the Runact actor runtime"
+license = "MIT"
+repository = "https://github.com/thepaperos/paperos"
+documentation = "https://docs.rs/paperos"
+homepage = "https://paperos.dev"
+
+[dependencies]
+runact = "1.0"
+crossterm = "0.28"
+ratatui = "0.29"
+mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+zip = "0.6"
