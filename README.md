@@ -58,6 +58,10 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 
 See [docs/roadmap.md](docs/roadmap.md) for the development roadmap.
 
+## Secret Management
+
+See [docs/secrets.md](docs/secrets.md) for the secure secret-management architecture (capability-based access, credential stores, redaction).
+
 ## License
 
 [License here]
